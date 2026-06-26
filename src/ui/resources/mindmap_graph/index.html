@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mindmap graph</title>
+  <!-- Vendored for offline / PyInstaller (Phase 7). Same build as unpkg vis-network UMD. -->
+  <script src="vendor/vis-network.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+    #wrap {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      width: 100%;
+      background: #000;
+    }
+    #toolbar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #121212;
+      border-bottom: 1px solid #2a2a2a;
+      font-family: system-ui, "Segoe UI", sans-serif;
+      font-size: 12px;
+    }
+    #toolbar button {
+      background: #2d2d2d;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 4px 12px;
+      cursor: pointer;
+    }
+    #toolbar button:hover:not(:disabled) { background: #3d3d3d; }
+    #toolbar button:disabled { opacity: 0.55; cursor: not-allowed; }
+    #toolbar span.hint { color: #888; margin-left: 8px; }
+    #largeWarn {
+      display: none;
+      flex: 0 0 auto;
+      padding: 4px 10px;
+      background: #1a1508;
+      color: #ffb74d;
+      font-size: 12px;
+      font-family: system-ui, "Segoe UI", sans-serif;
+      border-bottom: 1px solid #3e2723;
+    }
+    /* Flex column so #graph fills remaining space below toolbar (parent must be display:flex). */
+    #graphHost {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+      position: relative;
+      background: #000;
+    }
+    #graph {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      position: relative;
+    }
+    #selection {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      background: #0a0a0a;
+      color: #9e9e9e;
+      font-size: 12px;
+      font-family: system-ui, "Segoe UI", sans-serif;
+      border-top: 1px solid #222;
+      max-height: 3.2em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #empty {
+      position: absolute;
+      left: 0; right: 0;
+      top: 42%;
+      text-align: center;
+      color: #888;
+      font-family: system-ui, "Segoe UI", sans-serif;
+      font-size: 14px;
+      padding: 0 24px;
+      display: none;
+      pointer-events: none;
+      line-height: 1.5;
+      z-index: 2;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="toolbar">
+      <button type="button" id="btnFit" title="Fit entire graph in view">Fit</button>
+      <button type="button" id="btnReset" title="Reset to a slightly zoomed-out view (~88%) and recenter">Reset zoom</button>
+      <button type="button" id="btnAutoArrange" disabled title="Run force layout once, then lock positions so drags stay">Auto arrange</button>
+      <span class="hint">Pan · zoom · hover highlights links · drag moves the node and its linked neighbors (rest of graph stays put)</span>
+    </div>
+    <div id="largeWarn"></div>
+    <div id="graphHost">
+      <div id="empty"></div>
+      <div id="graph"></div>
+    </div>
+    <div id="selection">No node selected. Click a node for its full title here.</div>
+  </div>
+  <script>
+(function () {
+  var network = null;
+  var nodesDS = null;
+  var edgesDS = null;
+  var container = document.getElementById("graph");
+  var emptyEl = document.getElementById("empty");
+  var largeWarnEl = document.getElementById("largeWarn");
+  var selectionEl = document.getElementById("selection");
+  var graphHost = document.getElementById("graphHost");
+  var zoomSchedule = null;
+
+  function syncNetworkSize() {
+    if (!network || !container) return;
+    var w = Math.floor(container.offsetWidth);
+    var h = Math.floor(container.offsetHeight);
+    if (w < 2 || h < 2) return;
+    try {
+      if (typeof network.setSize === "function") {
+        network.setSize(String(w) + "px", String(h) + "px");
+      }
+    } catch (e0) {
+      try {
+        if (typeof network.setSize === "function") {
+          network.setSize(w, h);
+        }
+      } catch (e1) {}
+    }
+  }
+
+  function scheduleSyncNetworkSize() {
+    requestAnimationFrame(syncNetworkSize);
+  }
+
+  window.__ptaMindmapResize = scheduleSyncNetworkSize;
+
+  var resizeObserver =
+    typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(function () {
+          scheduleSyncNetworkSize();
+        })
+      : null;
+  if (resizeObserver && graphHost) {
+    resizeObserver.observe(graphHost);
+  }
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("resize", scheduleSyncNetworkSize);
+  }
+  /** id -> full label text (for LOD + tooltips) */
+  var fullLabelById = {};
+  var nodeTypeById = {};
+  /** Canvas labels: show full titles (tooltips still carry full text). Very large cap avoids mid-word … */
+  var LABEL_MAX = 10000;
+  var ZOOM_LABEL_HIDE = 0.22;
+  /** Tight fit: lower padding = graph fills more of the view (closer than vis default ~50). */
+  var FIT_PADDING_PX = 14;
+  /** Reset zoom: slightly below 1.0 so the view is a bit pulled back for context. */
+  var RESET_VIEW_SCALE = 0.82;
+  /** After physics: widen layout left/right (~16%) to use horizontal canvas space; Y unchanged. */
+  var HORIZONTAL_STRETCH = 1.16;
+  var initialFitPending = false;
+  var arranging = false;
+  var isDraggingNode = false;
+  /** node id -> object of neighbor id -> true */
+  var adjacency = {};
+  var selectedNodeId = null;
+  var hoverNodeId = null;
+  var highlightRaf = null;
+  /** Deep copy of layout physics (initial / auto arrange); used by setPhysicsEnabled. */
+  var fullPhysicsOptions = null;
+
+  /**
+   * While dragging: physics only affects unpinned nodes. We pin everyone except the dragged node
+   * and its 1-hop neighbors so edges can pull neighbors without moving the whole graph.
+   * Stabilization off: continuous solver only; avoids firing stabilizationIterationsDone mid-drag.
+   */
+  var DRAG_PHYSICS = {
+    enabled: true,
+    barnesHut: {
+      gravitationalConstant: -3000,
+      centralGravity: 0.025,
+      springLength: 215,
+      springConstant: 0.05,
+      damping: 0.72,
+      avoidOverlap: 0.24
+    },
+    timestep: 0.2,
+    stabilization: { enabled: false },
+    adaptiveTimestep: true
+  };
+
+  function truncate(s, max) {
+    if (!s || s.length <= max) return s;
+    return s.slice(0, Math.max(0, max - 1)) + "\u2026";
+  }
+
+  function humanizeEdgeType(et) {
+    if (!et) return "relation";
+    return String(et).replace(/_/g, " ");
+  }
+
+  function baseOptions(largeGraph) {
+    /** Slightly more open layout (less compact): longer springs, a bit more repulsion, weaker center pull. */
+    var stab = largeGraph
+      ? { iterations: 130, updateInterval: 40, onlyDynamicEdges: false }
+      : { iterations: 230, updateInterval: 25, onlyDynamicEdges: false };
+    var physics = {
+      enabled: true,
+      barnesHut: {
+        gravitationalConstant: largeGraph ? -8200 : -11500,
+        centralGravity: largeGraph ? 0.055 : 0.075,
+        springLength: largeGraph ? 145 : 195,
+        springConstant: largeGraph ? 0.038 : 0.048,
+        damping: 0.52,
+        avoidOverlap: largeGraph ? 0.48 : 0.42
+      },
+      stabilization: stab,
+      timestep: largeGraph ? 0.28 : 0.35,
+      adaptiveTimestep: true
+    };
+    return {
+      nodes: {
+        shape: "dot",
+        size: 11,
+        borderWidth: 1.5,
+        scaling: { min: 8, max: 18 },
+        color: {
+          background: "#FFC107",
+          border: "#6D4C41",
+          highlight: { background: "#FFD54F", border: "#FFFFFF" },
+          hover: { background: "#FFD54F", border: "#EEEEEE" }
+        },
+        font: {
+          color: "#E8E8E8",
+          size: 12,
+          face: "system-ui, Segoe UI, sans-serif",
+          align: "horizontal",
+          vadjust: 0
+        },
+        labelHighlightBold: false
+      },
+      edges: {
+        width: 0.85,
+        selectionWidth: 1.4,
+        hoverWidth: 1.15,
+        color: {
+          color: "#4a4a4a",
+          highlight: "#b0b0b0",
+          hover: "#909090",
+          inherit: false
+        },
+        smooth: { type: "continuous", roundness: 0.45 }
+      },
+      physics: physics,
+      interaction: {
+        hover: true,
+        hoverConnectedEdges: true,
+        selectConnectedEdges: true,
+        tooltipDelay: 160,
+        zoomView: true,
+        zoomSpeed: 0.55,
+        dragView: true,
+        dragNodes: true,
+        multiselect: false,
+        navigationButtons: false,
+        keyboard: { enabled: false }
+      },
+      layout: { randomSeed: 42 },
+      configure: { enabled: false }
+    };
+  }
+
+  function applyLabelLOD() {
+    if (!network || !nodesDS) return;
+    var scale = network.getScale();
+    var hide = scale < ZOOM_LABEL_HIDE;
+    var updates = [];
+    nodesDS.forEach(function (node) {
+      var id = node.id;
+      var full = fullLabelById[id] || node.label || String(id);
+      var nt = nodeTypeById[id] || "";
+      updates.push({
+        id: id,
+        label: hide ? "" : truncate(full, LABEL_MAX),
+        title: (nt ? "[" + nt + "] " : "") + full
+      });
+    });
+    if (updates.length) nodesDS.update(updates);
+  }
+
+  function scheduleLabelLOD() {
+    if (zoomSchedule) clearTimeout(zoomSchedule);
+    zoomSchedule = setTimeout(applyLabelLOD, 70);
+  }
+
+  function setPhysicsEnabled(on) {
+    if (!network || !fullPhysicsOptions) return;
+    try {
+      var ph = JSON.parse(JSON.stringify(fullPhysicsOptions));
+      ph.enabled = !!on;
+      network.setOptions({ physics: ph });
+    } catch (e) {}
+  }
+
+  /** movable[id] === true => not pinned (dragged node + direct neighbors only). */
+  function buildMovableIdsForDrag(dragId) {
+    var id = String(dragId);
+    var movable = {};
+    movable[id] = true;
+    var nb = adjacency[id];
+    if (nb) {
+      Object.keys(nb).forEach(function (k) {
+        movable[k] = true;
+      });
+    }
+    return movable;
+  }
+
+  function setNodePinsForDrag(movable) {
+    if (!nodesDS) return;
+    var updates = [];
+    nodesDS.forEach(function (node) {
+      var nid = String(node.id);
+      updates.push({
+        id: node.id,
+        fixed: movable[nid] ? false : { x: true, y: true }
+      });
+    });
+    if (updates.length) {
+      try {
+        nodesDS.update(updates);
+      } catch (e) {}
+    }
+  }
+
+  function clearAllNodePins() {
+    if (!nodesDS) return;
+    var updates = [];
+    nodesDS.forEach(function (node) {
+      updates.push({ id: node.id, fixed: false });
+    });
+    if (updates.length) {
+      try {
+        nodesDS.update(updates);
+      } catch (e2) {}
+    }
+  }
+
+  function buildAdjacency(visEdges) {
+    var a = {};
+    visEdges.forEach(function (e) {
+      var f = String(e.from);
+      var t = String(e.to);
+      if (!a[f]) a[f] = {};
+      if (!a[t]) a[t] = {};
+      a[f][t] = true;
+      a[t][f] = true;
+    });
+    return a;
+  }
+
+  var FONT_FACE = "system-ui, Segoe UI, sans-serif";
+
+  function applySubgraphHighlight(focusId) {
+    if (!nodesDS || !edgesDS) return;
+    var fid = focusId ? String(focusId) : null;
+    var nodeUpdates = [];
+    nodesDS.forEach(function (node) {
+      var id = String(node.id);
+      var full = fullLabelById[id] || node.label || id;
+      var nt = nodeTypeById[id] || "";
+      var scale = network ? network.getScale() : 1;
+      var hide = scale < ZOOM_LABEL_HIDE;
+      var base = {
+        id: id,
+        label: hide ? "" : truncate(full, LABEL_MAX),
+        title: (nt ? "[" + nt + "] " : "") + full
+      };
+      if (!fid) {
+        base.color = { background: "#FFC107", border: "#6D4C41", highlight: { background: "#FFD54F", border: "#FFFFFF" }, hover: { background: "#FFD54F", border: "#EEEEEE" } };
+        base.font = { color: "#E8E8E8", size: 12, face: FONT_FACE, align: "horizontal", vadjust: 0 };
+        base.size = 11;
+        base.borderWidth = 1.5;
+      } else if (id === fid) {
+        base.color = { background: "#FFD54F", border: "#FFFFFF", highlight: { background: "#FFECB3", border: "#FFFFFF" }, hover: { background: "#FFE082", border: "#FFFFFF" } };
+        base.font = { color: "#1a1a1a", size: 12, face: FONT_FACE, align: "horizontal", vadjust: 0 };
+        base.size = 14;
+        base.borderWidth = 2.4;
+      } else if (adjacency[id] && adjacency[id][fid]) {
+        base.color = { background: "#FFC107", border: "#BDBDBD", highlight: { background: "#FFD54F", border: "#EEEEEE" }, hover: { background: "#FFD54F", border: "#EEEEEE" } };
+        base.font = { color: "#F5F5F5", size: 12, face: FONT_FACE, align: "horizontal", vadjust: 0 };
+        base.size = 12;
+        base.borderWidth = 2;
+      } else {
+        base.color = { background: "#4a3d12", border: "#2c2410", highlight: { background: "#5d4d18", border: "#444" }, hover: { background: "#5d4d18", border: "#666" } };
+        base.font = { color: "#666666", size: 11, face: FONT_FACE, align: "horizontal", vadjust: 0 };
+        base.size = 9;
+        base.borderWidth = 1;
+      }
+      nodeUpdates.push(base);
+    });
+    var edgeUpdates = [];
+    edgesDS.forEach(function (edge) {
+      var inc = fid && (String(edge.from) === fid || String(edge.to) === fid);
+      if (!fid) {
+        edgeUpdates.push({
+          id: edge.id,
+          width: 0.85,
+          color: { color: "#4a4a4a", highlight: "#b0b0b0", hover: "#909090", inherit: false }
+        });
+      } else if (inc) {
+        edgeUpdates.push({
+          id: edge.id,
+          width: 1.45,
+          color: { color: "#c0c0c0", highlight: "#eeeeee", hover: "#d8d8d8", inherit: false }
+        });
+      } else {
+        edgeUpdates.push({
+          id: edge.id,
+          width: 0.45,
+          color: { color: "#252525", highlight: "#353535", hover: "#303030", inherit: false }
+        });
+      }
+    });
+    try {
+      nodesDS.update(nodeUpdates);
+      edgesDS.update(edgeUpdates);
+    } catch (e) {}
+  }
+
+  function scheduleSubgraphHighlight() {
+    var id = hoverNodeId || selectedNodeId;
+    if (highlightRaf) cancelAnimationFrame(highlightRaf);
+    highlightRaf = requestAnimationFrame(function () {
+      highlightRaf = null;
+      applySubgraphHighlight(id);
+    });
+  }
+
+  function setAutoArrangeButtonState(disabled, label) {
+    var btn = document.getElementById("btnAutoArrange");
+    if (!btn) return;
+    btn.disabled = !!disabled;
+    btn.textContent = label || "Auto arrange";
+  }
+
+  /** Spread nodes horizontally from cluster centroid (physics off). */
+  function stretchLayoutHorizontally() {
+    if (!network || typeof network.getPositions !== "function") return;
+    var pos;
+    try {
+      pos = network.getPositions();
+    } catch (e) {
+      return;
+    }
+    var ids = Object.keys(pos);
+    if (ids.length === 0) return;
+    var cx = 0;
+    var cy = 0;
+    ids.forEach(function (id) {
+      cx += pos[id].x;
+      cy += pos[id].y;
+    });
+    cx /= ids.length;
+    cy /= ids.length;
+    var k = HORIZONTAL_STRETCH;
+    ids.forEach(function (id) {
+      var p = pos[id];
+      var nx = cx + (p.x - cx) * k;
+      try {
+        if (typeof network.moveNode === "function") {
+          network.moveNode(id, nx, p.y);
+        }
+      } catch (e2) {}
+    });
+  }
+
+  /** After each stabilization pass: turn physics off (drags stick), widen horizontally, then view. */
+  function onStabilizationIterationsDone() {
+    if (!network) return;
+    if (isDraggingNode) return;
+    if (!initialFitPending && !arranging) return;
+    setPhysicsEnabled(false);
+    stretchLayoutHorizontally();
+    arranging = false;
+    setAutoArrangeButtonState(false, "Auto arrange");
+    var wasFirst = initialFitPending;
+    if (initialFitPending) {
+      initialFitPending = false;
+    }
+    try {
+      if (wasFirst) {
+        network.moveTo({
+          scale: RESET_VIEW_SCALE,
+          animation: { duration: 340, easingFunction: "easeInOutCubic" }
+        });
+      } else {
+        network.fit({
+          padding: FIT_PADDING_PX,
+          animation: {
+            duration: 340,
+            easingFunction: "easeInOutCubic"
+          }
+        });
+      }
+    } catch (e) {}
+    applyLabelLOD();
+    scheduleSubgraphHighlight();
+  }
+
+  function runAutoArrange() {
+    if (!network || arranging) return;
+    arranging = true;
+    setAutoArrangeButtonState(true, "Arranging\u2026");
+    setPhysicsEnabled(true);
+    try {
+      if (typeof network.stabilize === "function") {
+        network.stabilize();
+      }
+    } catch (e2) {}
+  }
+
+  function wireNetworkEvents() {
+    if (!network) return;
+    network.on("zoom", function () {
+      scheduleLabelLOD();
+      scheduleSubgraphHighlight();
+    });
+    network.on("dragStart", function (p) {
+      if (!p.nodes || !p.nodes.length || !nodesDS) return;
+      isDraggingNode = true;
+      var dragId = String(p.nodes[0]);
+      setNodePinsForDrag(buildMovableIdsForDrag(dragId));
+      try {
+        network.setOptions({ physics: DRAG_PHYSICS });
+      } catch (e) {}
+    });
+    network.on("dragEnd", function () {
+      isDraggingNode = false;
+      try {
+        setPhysicsEnabled(false);
+      } catch (e1) {}
+      clearAllNodePins();
+      scheduleLabelLOD();
+      scheduleSubgraphHighlight();
+    });
+    network.on("click", function (p) {
+      if (p.nodes && p.nodes.length) {
+        selectedNodeId = String(p.nodes[0]);
+        var id = selectedNodeId;
+        var full = fullLabelById[id] || id;
+        var nt = nodeTypeById[id] || "";
+        selectionEl.textContent = (nt ? "[" + nt + "] " : "") + full;
+      } else {
+        selectedNodeId = null;
+        selectionEl.textContent = "No node selected. Click a node for its full title here.";
+      }
+      scheduleSubgraphHighlight();
+    });
+    network.on("hoverNode", function (p) {
+      hoverNodeId = p.node ? String(p.node) : null;
+      selectionEl.style.color = "#bdbdbd";
+      scheduleSubgraphHighlight();
+    });
+    network.on("blurNode", function () {
+      hoverNodeId = null;
+      selectionEl.style.color = "#9e9e9e";
+      scheduleSubgraphHighlight();
+    });
+    network.on("stabilizationIterationsDone", onStabilizationIterationsDone);
+  }
+
+  function setGraphData(data) {
+    try {
+      fullLabelById = {};
+      nodeTypeById = {};
+      if (zoomSchedule) {
+        clearTimeout(zoomSchedule);
+        zoomSchedule = null;
+      }
+      initialFitPending = true;
+
+      if (!data || !data.nodes || data.nodes.length === 0) {
+        emptyEl.textContent = "No graph to display — select a book with framework edges between substantive nodes, or refresh after generating a framework.";
+        emptyEl.style.display = "block";
+        largeWarnEl.style.display = "none";
+        largeWarnEl.textContent = "";
+        if (network) {
+          network.destroy();
+          network = null;
+        }
+        nodesDS = null;
+        edgesDS = null;
+        selectionEl.textContent = "No graph data.";
+        initialFitPending = false;
+        arranging = false;
+        setAutoArrangeButtonState(true, "Auto arrange");
+        return;
+      }
+      emptyEl.style.display = "none";
+
+      var meta = data.meta || {};
+      var largeGraph = !!meta.large_graph;
+      if (largeGraph) {
+        largeWarnEl.style.display = "block";
+        largeWarnEl.textContent =
+          "Large graph (" +
+          (meta.node_count || data.nodes.length) +
+          " nodes) — labels auto-hide when zoomed out; use Fit if the view drifts.";
+      } else {
+        largeWarnEl.style.display = "none";
+        largeWarnEl.textContent = "";
+      }
+
+      var visNodes = data.nodes.map(function (n) {
+        var full = (n.label || String(n.id)).trim();
+        var id = String(n.id);
+        fullLabelById[id] = full;
+        var nt = n.node_type || "";
+        nodeTypeById[id] = nt;
+        return {
+          id: id,
+          label: truncate(full, LABEL_MAX),
+          title: (nt ? "[" + nt + "] " : "") + full
+        };
+      });
+
+      var visEdges = data.edges.map(function (e, i) {
+        var et = e.edge_type || "";
+        return {
+          id: "e" + i,
+          from: String(e.from),
+          to: String(e.to),
+          title: humanizeEdgeType(et)
+        };
+      });
+
+      adjacency = buildAdjacency(visEdges);
+      selectedNodeId = null;
+      hoverNodeId = null;
+
+      nodesDS = new vis.DataSet(visNodes);
+      edgesDS = new vis.DataSet(visEdges);
+      var opts = baseOptions(largeGraph);
+      try {
+        fullPhysicsOptions = JSON.parse(JSON.stringify(opts.physics));
+      } catch (ePh) {
+        fullPhysicsOptions = opts.physics;
+      }
+      var ds = { nodes: nodesDS, edges: edgesDS };
+
+      if (network) {
+        network.destroy();
+        network = null;
+      }
+      network = new vis.Network(container, ds, opts);
+      wireNetworkEvents();
+      scheduleSubgraphHighlight();
+      scheduleSyncNetworkSize();
+      setTimeout(scheduleSyncNetworkSize, 0);
+      setTimeout(scheduleSyncNetworkSize, 80);
+      setTimeout(scheduleSyncNetworkSize, 250);
+
+      window.mindmapFit = function () {
+        if (network) {
+          network.fit({
+            padding: FIT_PADDING_PX,
+            animation: { duration: 400, easingFunction: "easeInOutCubic" }
+          });
+          setTimeout(function () {
+            applyLabelLOD();
+            scheduleSubgraphHighlight();
+          }, 420);
+        }
+      };
+      window.mindmapResetView = function () {
+        if (network) {
+          network.moveTo({
+            scale: RESET_VIEW_SCALE,
+            animation: { duration: 340, easingFunction: "easeInOutCubic" }
+          });
+          setTimeout(function () {
+            applyLabelLOD();
+            scheduleSubgraphHighlight();
+          }, 360);
+        }
+      };
+      window.mindmapAutoArrange = runAutoArrange;
+    } catch (err) {
+      console.error("mindmap_graph:", err);
+      initialFitPending = false;
+      arranging = false;
+      setAutoArrangeButtonState(true, "Auto arrange");
+      emptyEl.textContent = "Graph error — see console.";
+      emptyEl.style.display = "block";
+    }
+  }
+
+  document.getElementById("btnFit").addEventListener("click", function () {
+    if (window.mindmapFit) window.mindmapFit();
+  });
+  document.getElementById("btnReset").addEventListener("click", function () {
+    if (window.mindmapResetView) window.mindmapResetView();
+  });
+  document.getElementById("btnAutoArrange").addEventListener("click", function () {
+    if (window.mindmapAutoArrange) window.mindmapAutoArrange();
+  });
+
+  function setGraphDataFromB64(b64) {
+    /** Python sends UTF-8 JSON bytes as base64; atob() alone mis-decodes multi-byte chars (mojibake). */
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var raw = new TextDecoder("utf-8").decode(bytes);
+    var data = JSON.parse(raw);
+    setGraphData(data);
+  }
+
+  window.setGraphData = setGraphData;
+  window.setGraphDataFromB64 = setGraphDataFromB64;
+})();
+  </script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist-info/
+pip-wheel-metadata/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+data/config.json
+
+# --- Runtime data (local per machine) ---
+data/*
+!data/.gitkeep
+!data/config.example.json
+
+books/*
+!books/.gitkeep
+
+# --- Build outputs ---
+dist/
+build/pyinstaller_*/
+build/proper_thinking_ai/
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Logs ---
+*.log
+logs/
+
+# --- PyInstaller / packaging scratch ---
+*.manifest
+*.spec.bak
+
+# --- Optional: large local test artifacts ---
+*.db-journal
+*.sqlite

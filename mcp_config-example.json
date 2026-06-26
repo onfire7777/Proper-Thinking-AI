@@ -1,0 +1,20 @@
+{
+    // config file for connecting external mcp servers to the proper thinking ai desktop app
+
+    "mcpServers": {
+      "proper-thinking-ai": {
+        // Complete path for the ProperThinkingAI_MCP.exe using \\ for the path not \
+        "command": "REPLACE_WITH_EXE_PATH",
+        "args": [],
+        // Complete path for the ProperThinkingAI_MCP folder using \\ for the path not \
+        "cwd": "REPLACE_WITH_FOLDER_PATH",
+        "env": {}
+      }
+    },
+    "preferences": {
+      "coworkScheduledTasksEnabled": false,
+      "ccdScheduledTasksEnabled": false,
+      "coworkWebSearchEnabled": true,
+      "menuBarEnabled": false
+    }
+  }
