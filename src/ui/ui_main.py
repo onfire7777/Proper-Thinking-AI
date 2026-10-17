@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -169,6 +170,14 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         if index == self._library_tab_index:
             self._stack.widget(self._library_tab_index).refresh_books()
+
+    def closeEvent(self, event):
+        if not self._stack.widget(0)._chatgpt.can_close():
+            event.ignore()
+            QMessageBox.information(self, "Finishing ChatGPT connection",
+                                    "Sign-in cancellation was requested. Wait for the connection operation to finish, then close the app again.")
+            return
+        super().closeEvent(event)
 
 
 def run_gui():

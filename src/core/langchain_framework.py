@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from ..storage.vector_store import VectorStore
 from .definitive_style_markers import (
@@ -50,18 +49,14 @@ from .placeholder_policy import (
     should_omit_highest_risk_or_affects,
     should_omit_optional_prose_block,
 )
-from .app_config import OPENROUTER_BASE_URL, resolve_model_for_task
+from .app_config import resolve_model_for_task
+from .model_client import create_chat_model
 
 log = logging.getLogger(__name__)
 
 
-def _chat_llm_for_task(task_name: str, max_tokens: int) -> ChatOpenAI:
-    return ChatOpenAI(
-        model=resolve_model_for_task(task_name),
-        max_tokens=max_tokens,
-        temperature=0,
-        openai_api_base=os.getenv("OPENAI_BASE_URL", OPENROUTER_BASE_URL),
-    )
+def _chat_llm_for_task(task_name: str, max_tokens: int):
+    return create_chat_model(task_name, max_tokens)
 
 
 def definitive_context_excerpt(

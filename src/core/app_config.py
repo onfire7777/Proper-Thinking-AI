@@ -1,4 +1,4 @@
-"""Single source of truth for OpenRouter settings + task routing."""
+"""Provider settings and task routing; OAuth credentials live separately."""
 
 from __future__ import annotations
 
@@ -10,18 +10,20 @@ from typing import Any, Dict, Optional
 
 # OpenRouter defaults
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENAI_MODEL = "openai/gpt-5.2"
+DEFAULT_OPENAI_MODEL = "openai/gpt-6.1-sol"
 DEFAULT_ROUTING_PRESET = "balanced"
 
 ROUTING_PRESET_CHOICES: tuple[str, ...] = ("best_quality", "balanced", "low_cost")
 
-# High-quality models shown in UI primary dropdown
+# OpenRouter model IDs verified against the public catalog on 2026-10-17.
 REASONING_MODEL_CHOICES: tuple[str, ...] = (
-    "openai/gpt-5.4",
-    "openai/gpt-5.2",
-    "openai/gpt-5.1",
-    "anthropic/claude-opus-4.6",
-    "anthropic/claude-sonnet-4.6",
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-astra",
+    "openai/gpt-6-luna",
+    "anthropic/claude-opus-5",
+    "anthropic/claude-sonnet-5.5",
+    "anthropic/claude-haiku-5.5",
+    "google/gemini-3.8-flash",
 )
 
 _TASK_TO_BUCKET: Dict[str, str] = {
@@ -41,19 +43,19 @@ _TASK_TO_BUCKET: Dict[str, str] = {
 
 _PRESET_BUCKET_MODELS: Dict[str, Dict[str, str]] = {
     "best_quality": {
-        "critical_reasoning": "openai/gpt-5.4",
-        "structured_json": "openai/gpt-5.2",
-        "fast_utility": "openai/gpt-5.1",
+        "critical_reasoning": "openai/gpt-6-astra",
+        "structured_json": "openai/gpt-6.1-sol",
+        "fast_utility": "anthropic/claude-sonnet-5.5",
     },
     "balanced": {
-        "critical_reasoning": "openai/gpt-5.2",
-        "structured_json": "openai/gpt-5.1",
-        "fast_utility": "anthropic/claude-sonnet-4.6",
+        "critical_reasoning": "openai/gpt-6.1-sol",
+        "structured_json": "anthropic/claude-sonnet-5.5",
+        "fast_utility": "anthropic/claude-haiku-5.5",
     },
     "low_cost": {
-        "critical_reasoning": "openai/gpt-5.1",
-        "structured_json": "anthropic/claude-sonnet-4.6",
-        "fast_utility": "anthropic/claude-sonnet-4.6",
+        "critical_reasoning": "openai/gpt-6-luna",
+        "structured_json": "openai/gpt-6-luna",
+        "fast_utility": "anthropic/claude-haiku-5.5",
     },
 }
 
@@ -158,26 +160,22 @@ def load_json_into_env() -> Dict[str, str]:
         file_model = (data.get("openrouter_model") or data.get("openai_model") or "").strip() or DEFAULT_OPENAI_MODEL
         file_preset = _normalize_preset(data.get("routing_preset"))
         apply_to_process_env(file_key, file_model, file_preset)
-        return {
-            "openrouter_api_key": file_key,
-            "openrouter_model": file_model,
-            "routing_preset": file_preset,
-        }
+        os.environ["AI_PROVIDER"] = "chatgpt" if data.get("ai_provider") == "chatgpt" else "openrouter"
+        os.environ["CHATGPT_MODEL"] = str(data.get("chatgpt_model") or "")
+        return get_effective_settings()
 
     env_key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
     env_model = (os.getenv("OPENROUTER_MODEL") or os.getenv("OPENAI_MODEL") or "").strip() or DEFAULT_OPENAI_MODEL
     env_preset = _normalize_preset(os.getenv("OPENROUTER_ROUTING_PRESET"))
     apply_to_process_env(env_key, env_model, env_preset)
-    return {
-        "openrouter_api_key": env_key,
-        "openrouter_model": env_model,
-        "routing_preset": env_preset,
-    }
+    return get_effective_settings()
 
 
 def get_effective_settings() -> Dict[str, str]:
     """Current process env after load (no file read)."""
     return {
+        "ai_provider": "chatgpt" if os.getenv("AI_PROVIDER") == "chatgpt" else "openrouter",
+        "chatgpt_model": os.getenv("CHATGPT_MODEL", "").strip(),
         "openrouter_api_key": (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip(),
         "openrouter_model": (os.getenv("OPENROUTER_MODEL") or os.getenv("OPENAI_MODEL") or "").strip()
         or DEFAULT_OPENAI_MODEL,
@@ -201,6 +199,26 @@ def save_settings(api_key: str, model: str, routing_preset: Optional[str] = None
     apply_to_process_env(data["openrouter_api_key"], data["openrouter_model"], data["routing_preset"])
 
 
+def save_provider_settings(provider: str, chatgpt_model: str = "") -> None:
+    if provider not in ("openrouter", "chatgpt"):
+        raise ValueError("Unknown AI provider")
+    data = _read_file()
+    data.update(ai_provider=provider, chatgpt_model=chatgpt_model.strip())
+    _write_file(data)
+    os.environ["AI_PROVIDER"] = provider
+    os.environ["CHATGPT_MODEL"] = chatgpt_model.strip()
+
+
+def acknowledge_chatgpt_plan() -> bool:
+    """Return true once so the UI can show the required first-connection welcome."""
+    data = _read_file()
+    if data.get("chatgpt_welcome_shown"):
+        return False
+    data["chatgpt_welcome_shown"] = True
+    _write_file(data)
+    return True
+
+
 def get_ui_theme() -> str:
     """Persisted UI theme: light | dark (default light)."""
     t = (str(_read_file().get("ui_theme") or "light")).strip().lower()
@@ -219,6 +237,8 @@ def save_ui_theme(theme: str) -> None:
 def resolve_model_for_task(task_name: str) -> str:
     """Return routed model for a given logical task using current preset + env overrides."""
     settings = get_effective_settings()
+    if settings["ai_provider"] == "chatgpt":
+        return settings["chatgpt_model"]
     preset = _normalize_preset(settings.get("routing_preset"))
     bucket = _TASK_TO_BUCKET.get((task_name or "").strip().lower(), _TASK_TO_BUCKET["default"])
     model = _PRESET_BUCKET_MODELS.get(preset, _PRESET_BUCKET_MODELS[DEFAULT_ROUTING_PRESET]).get(

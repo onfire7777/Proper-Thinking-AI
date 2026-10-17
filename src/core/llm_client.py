@@ -4,13 +4,14 @@ from typing import Optional
 
 from openai import OpenAI
 from openai import APIConnectionError, APIError, AuthenticationError, RateLimitError
-from .app_config import DEFAULT_OPENAI_MODEL, OPENROUTER_BASE_URL
+from .app_config import DEFAULT_OPENAI_MODEL, OPENROUTER_BASE_URL, get_effective_settings
 
 
 # Handles LLM calls using OpenRouter (OpenAI-compatible API)
 class LLMClient:
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, provider: Optional[str] = None):
+        self.provider = provider
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.model = model or os.getenv("OPENROUTER_MODEL") or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
         self.base_url = os.getenv("OPENAI_BASE_URL", OPENROUTER_BASE_URL)
@@ -27,6 +28,12 @@ class LLMClient:
         return self._client
 
     def test_connection(self) -> tuple[bool, str]:
+        if self._uses_chatgpt():
+            try:
+                self.generate("", "Reply with the single word OK.")
+                return True, "ChatGPT plan connection verified with a completed response."
+            except Exception as exc:
+                return False, str(exc)
         try:
             client = self._get_client()
             client.chat.completions.create(
@@ -59,6 +66,9 @@ class LLMClient:
             return False, f"OpenRouter connection test failed: {exc}"
 
     def prewarm_model(self) -> bool:
+        if self._uses_chatgpt():
+            # Do not spend plan allowance on background warm-up requests.
+            return True
         try:
             client = self._get_client()
             client.chat.completions.create(
@@ -76,6 +86,12 @@ class LLMClient:
         user_prompt: str,
         max_completion_tokens: int = 4096,
     ) -> str:
+        if self._uses_chatgpt():
+            from langchain_core.messages import HumanMessage, SystemMessage
+            from .model_client import ChatGPTModel
+            return ChatGPTModel().invoke([
+                SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)
+            ]).content
         client = self._get_client()
         try:
             response = client.chat.completions.create(
@@ -123,3 +139,6 @@ class LLMClient:
             )
 
         return result
+
+    def _uses_chatgpt(self) -> bool:
+        return (self.provider or get_effective_settings()["ai_provider"]) == "chatgpt"

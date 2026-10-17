@@ -4,7 +4,7 @@
 
 Jake's Proper Thinking AI is a Python desktop application for working with the reasoning inside a book. Import a PDF, build a searchable local library, ask questions with page references, and extract a framework of definitions, principles, steps, warnings, and constraints.
 
-The same backend is available through a desktop interface, a command-line interface, an HTTP API, and a Model Context Protocol (MCP) server. Books and generated artifacts are stored locally; AI reasoning uses models accessed through OpenRouter.
+The same backend is available through a desktop interface, a command-line interface, an HTTP API, and a Model Context Protocol (MCP) server. Books and generated artifacts are stored locally; AI reasoning can use your eligible ChatGPT plan through OAuth or models accessed through OpenRouter.
 
 [Repository](https://github.com/onfire7777/Proper-Thinking-AI) · [CLI reference](CLI.md) · [Quick start](#quick-start) · [Architecture](#architecture) · [MCP integration](#mcp-integration)
 
@@ -47,7 +47,7 @@ The Q&A prompts require answers to use the supplied source material and instruct
 - Git and a 64-bit Python 3 installation compatible with [requirements.txt](requirements.txt).
 - A desktop environment for the PyQt interface. Windows packaging scripts are included.
 - Internet access for dependency installation and the initial embedding-model download.
-- An OpenRouter API key and access to the selected models for AI Q&A and framework generation.
+- An eligible ChatGPT Plus/Pro plan with plan usage authorized for this app, **or** an OpenRouter API key and access to the selected models.
 
 The repository does not currently declare a minimum Python version or provide a fully locked dependency set. Several application dependencies are pinned, while others use minimum-version constraints.
 
@@ -83,7 +83,12 @@ Windows is the supplied packaging target; these shell commands do not imply that
 python main.py
 ```
 
-In **Settings**, enter your OpenRouter API key, choose a primary model and quality mode, save, and test the connection. The settings are saved in `data/config.json`.
+In **Settings**, choose your AI provider:
+
+- **ChatGPT:** select **ChatGPT · Sign in with your plan**, then **Continue with ChatGPT**. Complete OpenAI's sign-in and plan-usage permission screen in your browser. Return to the app, choose an available model, and click **Test ChatGPT connection**. No API key or client secret is needed.
+- **OpenRouter:** enter your API key, choose a primary model and quality mode, save, and test the connection.
+
+Provider selection and model changes apply immediately. OpenRouter key/preset edits use **Save**. Non-OAuth settings are stored in `data/config.json`; OAuth tokens are stored separately in protected local storage.
 
 ### 3. Build your first framework
 
@@ -100,7 +105,7 @@ The first embedding run may take longer while Sentence Transformers downloads `a
 
 | Tab | Purpose |
 | --- | --- |
-| **Settings** | Configure the OpenRouter key, primary model, and task-routing preset; preview model assignments and test connectivity. |
+| **Settings** | Connect a ChatGPT account and select an eligible model, or configure an OpenRouter key and routing preset. Test connectivity and manage usage. |
 | **Upload** | Import PDF books, including batches, and extract their text and metadata. |
 | **Library** | Inspect uploaded books and embedding status, generate embeddings, and remove books. |
 | **Chat** | Ask source-grounded questions and manage saved conversations for the selected book. |
@@ -201,22 +206,40 @@ The graph uses typed relationships such as `supports`, `implemented_by`, `leads_
 
 ## Configuration and model routing
 
+### ChatGPT plan sign-in
+
+The app implements OpenAI's documented [local/open-source OAuth flow](https://developers.openai.com/siwc/token-sharing-open-source). Availability and eligible plans are controlled by OpenAI. Your browser handles sign-in and consent; Proper Thinking AI does not collect your password or read your ChatGPT conversations.
+
+- Authorization uses PKCE, random state and nonce, and a loopback callback bound to `127.0.0.1` on an available port. The app verifies the signed ID token before accepting the account.
+- Each installation retains a stable host ID. Saved accounts keep separate client registrations, identities and credentials; **Add account** creates a separate connection, and the account picker switches between them.
+- The model picker loads the selected account's available models. The chosen model handles **all** reasoning tasks in ChatGPT mode; OpenRouter's quality presets do not apply.
+- Access tokens refresh automatically under a cross-process lock. **Sign out** attempts to revoke the renewable session and clears local tokens while retaining the account registration for reconnection.
+- **Manage usage** opens [ChatGPT Settings → Usage](https://chatgpt.com/settings/usage). Plan limits apply across eligible usage. The app does not automatically switch to paid OpenRouter/API calls if authorization or plan allowance is unavailable.
+
+ChatGPT requests use the public Responses API with `store: false` and streaming enabled. Only a completed response is accepted; interrupted or failed streams are not presented as successful answers. Server-side conversation storage, temperature overrides, and output-token-limit parameters are not sent on this path. The app still stores its own chat history locally.
+
+The connection test makes a small real request and uses plan allowance. First-time login and account eligibility require verification in your browser; automated tests exercise protocol and request behavior with local fixtures, not a real subscription.
+
+The sign-in button uses the official [ChatGPT mark](https://github.com/openai/sign-in-with-chatgpt-devkit/tree/main/assets/brand), subject to [OpenAI's brand guidelines](https://openai.com/brand/). The mark does not imply OpenAI endorsement of this project.
+
 ### Saved settings and environment variables
 
 The desktop Settings tab is the simplest configuration path. For an initial environment-based setup, create a local `.env` in the repository root:
 
 ```dotenv
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=openai/gpt-5.2
+OPENROUTER_MODEL=openai/gpt-6.1-sol
 OPENROUTER_ROUTING_PRESET=balanced
 ```
 
-These are application configuration values, not a promise of model availability. The default primary model is defined in [`app_config.py`](src/core/app_config.py); the models accessible to you depend on OpenRouter and your account.
+The default primary model is **GPT-6.1 Sol**. The model dropdown also offers GPT-6 Astra, GPT-6 Luna, Claude Opus 5, Claude Sonnet 5.5, Claude Haiku 5.5, and Gemini 3.8 Flash. These IDs were verified against [OpenRouter's model catalog](https://openrouter.ai/models) on October 17, 2026; account access and provider availability can still vary. Configuration lives in [`app_config.py`](src/core/app_config.py).
 
 > **Precedence:** Once `data/config.json` exists, it is authoritative for the saved API key, primary model, and routing preset. An empty saved key does not fall back to `.env`. Update the saved settings if changing `.env` appears to have no effect.
 
 | Setting | Purpose |
 | --- | --- |
+| `AI_PROVIDER` | `openrouter` (default) or `chatgpt`; saved provider selection takes precedence after configuration is created. |
+| `CHATGPT_MODEL` | An eligible model slug discovered for the connected ChatGPT account. No OpenRouter prefix. |
 | `OPENROUTER_API_KEY` | Credential for AI calls through OpenRouter. `OPENAI_API_KEY` is also accepted as a fallback during environment-only initialization. |
 | `OPENROUTER_MODEL` | Primary reasoning model; `OPENAI_MODEL` is a fallback during environment-only initialization. |
 | `OPENROUTER_ROUTING_PRESET` | Task-routing preset: `best_quality`, `balanced`, or `low_cost`. |
@@ -224,11 +247,11 @@ These are application configuration values, not a promise of model availability.
 | `GRAPH_REPAIR_MAX_ITERATIONS` | Graph-repair iteration cap; default `2`. |
 | `PHASE4_MAX_ITERATIONS` | Framework extraction/judgment pass cap; default `2`. |
 
-Configuration normalizes the OpenAI-compatible base URL to `https://openrouter.ai/api/v1`. This is an OpenRouter integration; merely setting an arbitrary `OPENAI_BASE_URL` is not a supported replacement for its startup configuration.
+OpenRouter configuration normalizes its OpenAI-compatible base URL to `https://openrouter.ai/api/v1`. ChatGPT OAuth uses the public `https://api.openai.com/v1` endpoint separately. Setting `OPENAI_BASE_URL` is not a substitute for selecting a provider or completing OAuth.
 
 ### Task-specific model selection
 
-The routing preset assigns models to three buckets:
+In **OpenRouter mode**, the routing preset assigns models to three buckets:
 
 | Bucket | Example tasks |
 | --- | --- |
@@ -237,6 +260,14 @@ The routing preset assigns models to three buckets:
 | Fast utility | Metadata and target-audience extraction. |
 
 The selected **primary model overrides the critical-reasoning bucket**. Changing the quality preset therefore does not necessarily change that model. Use the Settings preview to see the actual assignments. Preset mappings are defined in `app_config.py`.
+
+| Preset | Critical reasoning before primary override | Structured JSON | Fast utility |
+| --- | --- | --- | --- |
+| Best Quality | GPT-6 Astra | GPT-6.1 Sol | Claude Sonnet 5.5 |
+| Balanced | GPT-6.1 Sol | Claude Sonnet 5.5 | Claude Haiku 5.5 |
+| Low Cost | GPT-6 Luna | GPT-6 Luna | Claude Haiku 5.5 |
+
+Existing saved model selections are preserved. To switch a saved older model, choose a current primary model in Settings and save. Requests use provider sampling defaults instead of forcing a temperature value that newer reasoning models may reject.
 
 ## Command-line interface
 
@@ -358,16 +389,19 @@ Proper-Thinking-AI/
 |-- data/
 |   |-- books.db            SQLite library, chunks, conversations, frameworks, and audits
 |   |-- chroma_db/          Persistent vector collections, isolated by book ID
-|   `-- config.json         OpenRouter credentials, model routing, and theme settings
+|   |-- config.json         Provider selection, OpenRouter credentials, models, and theme
+|   `-- chatgpt/            Protected OAuth credentials and refresh lock
 |-- .env                    Optional local bootstrap configuration
 `-- .venv/                  Local Python environment, when created
 ```
 
 These runtime paths are created as needed and excluded from Git by [`.gitignore`](.gitignore). Back up `books/` and `data/` together to preserve the library, vectors, conversations, and generated work. Regeneration replaces the selected framework's generated structure; deleting a book also deletes its associated library records and artifacts.
 
-PDF extraction, chunking, and sentence embeddings run locally. AI Q&A and framework analysis send relevant excerpts, questions, and/or derived framework content to OpenRouter and the selected model provider. The initial sentence-model download also requires a network connection. Local storage does not make the entire workflow offline.
+PDF extraction, chunking, and sentence embeddings run locally. AI Q&A and framework analysis send relevant excerpts, questions, and/or derived framework content to OpenAI in ChatGPT mode, or OpenRouter and the selected model provider in OpenRouter mode. The initial sentence-model download also requires a network connection. Local storage does not make the entire workflow offline.
 
 The saved API key is stored as plaintext in `data/config.json`. Treat `.env`, configuration files, database backups, and exported documents as sensitive when they contain private material. Settings-read operations mask the key by default, but explicitly requesting `include_api_key` exposes it to that caller.
+
+ChatGPT access, refresh, and ID tokens are **not** saved in `config.json`, environment variables, UI fields, or logs. On Windows, `data/chatgpt/credentials.dat` is encrypted for the current Windows user with DPAPI. On macOS/Linux, its directory and credential file use owner-only permissions (`0700`/`0600`); they are not OS-keychain encrypted. Credentials are written atomically and excluded from Git. Do not share the credential directory or attempt to reuse another application's tokens. If remote revocation cannot be confirmed during sign-out, the app tells you to disconnect it in ChatGPT settings.
 
 In packaged mode, the application normally uses the executable's directory as its data root. It can reuse the nearest parent directory containing existing data markers, allowing a nested MCP bundle to share a desktop library. Check that location before moving or backing up a bundle.
 
@@ -410,12 +444,13 @@ Useful local checks after installing dependencies:
 
 ```powershell
 python -m pip check
+python -m unittest discover -s tests -v
 python -m src.cli --help
 python -m src.cli books list
 python -m src.api --help
 ```
 
-`books list` initializes local storage when needed. The repository currently has no dedicated automated test suite; these commands are smoke checks, not full validation of model output, desktop rendering, exports, or packaging. Verify those workflows separately when changing their implementation.
+`books list` initializes local storage when needed. Tests cover routing, saved-setting precedence, OAuth callback/state and identity validation, token protection and refresh, account isolation, sign-out, provider controls, and completed/failed streaming behavior without live paid API calls. These tests and smoke checks do not fully validate real subscription eligibility, model output, exports, or packaging. Verify those workflows separately when changing their implementation.
 
 ## Troubleshooting and limits
 

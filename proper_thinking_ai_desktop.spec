@@ -91,6 +91,7 @@ except Exception:
 mindmap_res = ROOT / "src" / "ui" / "resources" / "mindmap_graph"
 if mindmap_res.is_dir():
     datas += [(str(mindmap_res), "src/ui/resources/mindmap_graph")]
+datas += [(str(ROOT / "src" / "ui" / "resources" / "chatgpt-button-white-21.svg"), "src/ui/resources")]
 
 dotenv_path = ROOT / ".env"
 if dotenv_path.is_file():

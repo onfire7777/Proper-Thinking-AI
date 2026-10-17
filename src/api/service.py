@@ -176,7 +176,8 @@ def settings_save(api_key: str, model: str, routing_preset: Optional[str] = None
 def settings_test_connection(api_key: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
     from src.core.llm_client import LLMClient
 
-    client = LLMClient(api_key=(api_key or "").strip() or None, model=(model or "").strip() or None)
+    client = LLMClient(api_key=(api_key or "").strip() or None, model=(model or "").strip() or None,
+                       provider="openrouter")
     ok, msg = client.test_connection()
     return {"ok": bool(ok), "message": msg}
 

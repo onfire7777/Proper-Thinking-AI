@@ -1,4 +1,4 @@
-"""Settings tab: OpenRouter key + routing preset; persists to data/config.json."""
+"""AI provider settings; OAuth credentials are kept out of data/config.json."""
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -21,8 +21,10 @@ from ..core.app_config import (
     get_effective_settings,
     preview_bucket_models_for_preset,
     save_settings,
+    save_provider_settings,
 )
 from ..core.llm_client import LLMClient
+from .chatgpt_settings import ChatGPTConnectionWidget
 from .styles import (
     create_header_widget,
     create_section_card,
@@ -65,13 +67,29 @@ class SettingsTab(QWidget):
             create_header_widget(
                 self,
                 "Settings",
-                "Configure your OpenRouter API key, choose your primary model, and set how models are "
-                "used across the app with quality presets.",
+                "Choose your ChatGPT plan or OpenRouter, then configure the models used across the app.",
             )
         )
         content_layout.addSpacing(TAB_SPACING)
 
+        provider_section, provider_inner = create_section_card(content, "AI provider")
+        self._provider_combo = QComboBox()
+        self._provider_combo.setStyleSheet(COMBO_STYLE)
+        self._provider_combo.addItem("OpenRouter · API key", "openrouter")
+        self._provider_combo.addItem("ChatGPT · Sign in with your plan", "chatgpt")
+        self._provider_combo.setAccessibleName("AI provider")
+        provider_inner.addWidget(self._provider_combo)
+        content_layout.addWidget(provider_section)
+        content_layout.addSpacing(SECTION_CARD_STACK_GAP_PX)
+
+        self._chatgpt_section, chatgpt_inner = create_section_card(content, "ChatGPT account")
+        self._chatgpt = ChatGPTConnectionWidget(self)
+        chatgpt_inner.addWidget(self._chatgpt)
+        content_layout.addWidget(self._chatgpt_section)
+        content_layout.addSpacing(SECTION_CARD_STACK_GAP_PX)
+
         open_section, open_inner = create_section_card(content, "OpenRouter")
+        self._openrouter_section = open_section
         form = QFormLayout()
         form.setContentsMargins(0, 0, 0, 0)
         form.setSpacing(10)
@@ -136,6 +154,7 @@ class SettingsTab(QWidget):
         content_layout.addSpacing(SECTION_CARD_STACK_GAP_PX)
 
         preview_section, preview_inner = create_section_card(content, "Current model usage")
+        self._preview_section = preview_section
         self._preview_critical = QLabel("")
         self._preview_structured = QLabel("")
         self._preview_fast = QLabel("")
@@ -168,6 +187,8 @@ class SettingsTab(QWidget):
 
         self._model_combo.currentIndexChanged.connect(self._refresh_preview)
         self._preset_combo.currentIndexChanged.connect(self._refresh_preview)
+        self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self._chatgpt.model_changed.connect(self._on_chatgpt_model_changed)
 
     def apply_theme(self) -> None:
         from .styles import (
@@ -186,6 +207,8 @@ class SettingsTab(QWidget):
         self._show_key_btn.setStyleSheet(BTN_SECONDARY_SMALL)
         self._model_combo.setStyleSheet(COMBO_STYLE)
         self._preset_combo.setStyleSheet(COMBO_STYLE)
+        self._provider_combo.setStyleSheet(COMBO_STYLE)
+        self._chatgpt.apply_theme()
         self._key_label.setStyleSheet(SECTION_LABEL_STYLE)
         self._model_label.setStyleSheet(SECTION_LABEL_STYLE)
         self._preset_label.setStyleSheet(SECTION_LABEL_STYLE)
@@ -207,13 +230,17 @@ class SettingsTab(QWidget):
 
     def _reload_from_config(self):
         s = get_effective_settings()
+        self._provider_combo.blockSignals(True)
+        self._provider_combo.setCurrentIndex(self._provider_combo.findData(s.get("ai_provider", "openrouter")))
+        self._provider_combo.blockSignals(False)
+        self._update_provider_visibility()
         self._key_edit.setText(s.get("openrouter_api_key") or "")
         model = s.get("openrouter_model") or DEFAULT_OPENAI_MODEL
         idx = self._model_combo.findText(model)
-        if idx >= 0:
-            self._model_combo.setCurrentIndex(idx)
-        else:
-            self._model_combo.setCurrentIndex(0)
+        if idx < 0:
+            self._model_combo.addItem(model)
+            idx = self._model_combo.findText(model)
+        self._model_combo.setCurrentIndex(idx)
         preset = (s.get("routing_preset") or "balanced").strip().lower()
         pidx = self._preset_combo.findData(preset)
         if pidx >= 0:
@@ -242,15 +269,34 @@ class SettingsTab(QWidget):
 
     def _on_save(self):
         save_settings(self._current_key(), self._current_model(), self._current_preset())
+        save_provider_settings(self._provider_combo.currentData(), self._chatgpt.selected_model() or
+                               get_effective_settings()["chatgpt_model"])
         QMessageBox.information(
             self,
             "Settings saved",
-            "Values were written to data/config.json and applied to this session.",
+            "Provider settings were saved and applied. ChatGPT credentials remain in protected local storage.",
         )
 
     def _on_test(self):
-        client = LLMClient(api_key=self._current_key(), model=self._current_model())
+        client = LLMClient(api_key=self._current_key(), model=self._current_model(), provider="openrouter")
         ok, msg = client.test_connection()
         title = "Connection OK" if ok else "Connection failed"
         box = QMessageBox.information if ok else QMessageBox.warning
         box(self, title, msg)
+
+    def _update_provider_visibility(self):
+        chatgpt = self._provider_combo.currentData() == "chatgpt"
+        self._chatgpt_section.setVisible(chatgpt)
+        self._openrouter_section.setVisible(not chatgpt)
+        self._preview_section.setVisible(not chatgpt)
+        self._btn_test.setVisible(not chatgpt)
+
+    def _on_provider_changed(self):
+        self._update_provider_visibility()
+        save_provider_settings(self._provider_combo.currentData(), self._chatgpt.selected_model() or
+                               get_effective_settings()["chatgpt_model"])
+        if self._provider_combo.currentData() == "chatgpt":
+            self._chatgpt.refresh()
+
+    def _on_chatgpt_model_changed(self, model):
+        save_provider_settings(self._provider_combo.currentData(), model)

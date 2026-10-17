@@ -5,11 +5,10 @@ import logging
 from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from .langchain_retriever import BookRetriever
 from ..storage.vector_store import VectorStore
-from .app_config import OPENROUTER_BASE_URL, resolve_model_for_task
+from .model_client import create_chat_model
 
 log = logging.getLogger(__name__)
 
@@ -82,18 +81,13 @@ def run_qa(
         f"Using ONLY the sources above, answer the question following the rules. Keep response under {max_words} words."
     )
 
-    llm = ChatOpenAI(
-        model=resolve_model_for_task("default"),
-        max_tokens=max_completion_tokens,
-        temperature=0,
-        openai_api_base=OPENROUTER_BASE_URL,
-    )
+    llm = create_chat_model("default", max_completion_tokens)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     try:
         response = llm.invoke(messages)
     except Exception as e:
         log.exception("LangChain RAG LLM invoke failed")
-        raise RuntimeError(f"OpenRouter call failed: {e}") from e
+        raise RuntimeError(f"AI provider call failed: {e}") from e
 
     content = getattr(response, "content", None) or ""
     answer_text = (content or "").strip()

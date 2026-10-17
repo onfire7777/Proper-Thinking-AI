@@ -39,6 +39,8 @@ from PyQt6.QtGui import (
 from src.api import service
 
 from ..core.book_manager import BookManager
+from ..core.app_config import get_effective_settings
+from ..core.chatgpt_auth import USAGE_URL
 from .styles import (
     CHAT_HISTORY_DOC_STYLESHEET,
     CHAT_HISTORY_TEXTEDIT_STYLE,
@@ -496,6 +498,11 @@ class ChatTab(QWidget):
         )
         content_layout.addSpacing(TAB_SPACING)
 
+        self._provider_status = QLabel()
+        self._provider_status.setWordWrap(True)
+        self._provider_status.setOpenExternalLinks(True)
+        content_layout.addWidget(self._provider_status)
+
         self._book_label, self.book_combo, self.refresh_button = create_select_book_row(self)
         self.book_combo.currentIndexChanged.connect(self._on_book_selected)
         self.refresh_button.clicked.connect(self._load_books)
@@ -669,6 +676,7 @@ class ChatTab(QWidget):
         self._footer_layout.setSpacing(0)
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(MUTED_LABEL_STYLE)
+        self._provider_status.setStyleSheet(MUTED_LABEL_STYLE)
         self.status_label.setWordWrap(True)
         self._footer_layout.addWidget(self.status_label)
 
@@ -833,6 +841,12 @@ class ChatTab(QWidget):
 
     def showEvent(self, event: QShowEvent):
         super().showEvent(event)
+        settings = get_effective_settings()
+        if settings["ai_provider"] == "chatgpt":
+            model = html.escape(settings["chatgpt_model"] or "choose a model in Settings")
+            self._provider_status.setText(f'ChatGPT plan selected · {model} · <a href="{USAGE_URL}">Manage usage</a>')
+        else:
+            self._provider_status.setText("OpenRouter · API usage")
         self._load_books()
         QTimer.singleShot(0, self._restore_rail_state)
 
