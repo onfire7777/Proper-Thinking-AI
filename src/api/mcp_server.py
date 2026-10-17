@@ -12,15 +12,15 @@ import logging
 import sys
 from typing import Any, Dict, List, Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer  # mcp 2.x: FastMCP was renamed MCPServer
 
 from src.api import service
 
 log = logging.getLogger(__name__)
 
 
-def build_mcp() -> FastMCP:
-    mcp = FastMCP(
+def build_mcp() -> MCPServer:
+    mcp = MCPServer(
         "proper-thinking-ai",
         instructions=(
             "Proper Thinking AI: books, semantic search, RAG Q&A (OpenRouter), per-book chat, and "
