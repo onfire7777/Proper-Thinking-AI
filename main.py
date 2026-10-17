@@ -7,7 +7,13 @@ if sys.platform == "win32":
     import os
 
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-    import torch  # noqa: F401
+    try:
+        import torch  # noqa: F401
+    except OSError as exc:
+        # Some Windows Application Control policies block PyTorch DLLs from local
+        # virtual environments. Let the GUI start; embedding operations can
+        # report the policy failure when they actually need torch.
+        print(f"Warning: PyTorch preload skipped: {exc}", file=sys.stderr)
 
 from dotenv import load_dotenv
 

@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1320" viewBox="0 0 1600 1320" role="img" aria-labelledby="title desc">
+<title id="title">Jake's Proper Thinking AI — implemented system architecture</title>
+<desc id="desc">Four interfaces share a Python BookManager backend. PDFs are parsed to SQLite, local SentenceTransformer embeddings are stored in Chroma, and LangChain reasoning calls OpenRouter. Frameworks become documents, audits and mindmaps. Local worker processes persist progress to SQLite.</desc>
+<defs>
+ <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#52657b"/></marker>
+ <style>
+ text{font-family:Segoe UI,Arial,sans-serif;fill:#16283e} .title{font-size:36px;font-weight:700}.sub{font-size:19px;fill:#57697d}.label{font-size:15px;font-weight:700;letter-spacing:2px;fill:#52657b}.head{font-size:23px;font-weight:650}.body{font-size:18px}.small{font-size:16px;fill:#52657b}.box{fill:#fff;stroke:#c9d5e0;stroke-width:1.5;rx:12}.blue{fill:#edf5ff;stroke:#a6c4e8}.green{fill:#edf8f4;stroke:#9acbb9}.purple{fill:#f4f0fc;stroke:#bdb0dc}.amber{fill:#fff7e7;stroke:#dbc58e}.line{fill:none;stroke:#52657b;stroke-width:2;marker-end:url(#arrow)}.dash{stroke-dasharray:7 6}.band{fill:#f1f5f9;rx:20}
+ </style>
+</defs>
+<rect width="1600" height="1320" fill="#fbfcfe"/>
+<text x="60" y="65" class="title">Jake’s Proper Thinking AI</text>
+<text x="60" y="99" class="sub">Implemented architecture · local application + hosted language-model inference</text>
+<text x="1540" y="65" text-anchor="end" class="small">MASTER · e2da26c · 17 OCT 2026</text>
+
+<text x="60" y="152" class="label">01 / INTERFACES</text>
+<rect x="60" y="174" width="350" height="118" class="box blue"/>
+<text x="82" y="208" class="head">Desktop · PyQt6</text>
+<text x="82" y="239" class="body">Settings · Upload · Library · Chat</text>
+<text x="82" y="266" class="body">Frameworks · Mindmap</text>
+<rect x="436" y="174" width="350" height="118" class="box blue"/>
+<text x="458" y="208" class="head">Command line</text>
+<text x="458" y="239" class="body">Books · frameworks · exports</text>
+<text x="458" y="266" class="body">Blocking or async + polling</text>
+<rect x="812" y="174" width="350" height="118" class="box blue"/>
+<text x="834" y="208" class="head">HTTP · FastAPI / Uvicorn</text>
+<text x="834" y="239" class="body">Loopback :8765 by default</text>
+<text x="834" y="266" class="body">Optional X-API-Key protection</text>
+<rect x="1188" y="174" width="352" height="118" class="box blue"/>
+<text x="1210" y="208" class="head">MCP · FastMCP</text>
+<text x="1210" y="239" class="body">External AI clients → stdio</text>
+<text x="1210" y="266" class="body">Tools · status · document / graph</text>
+
+<path d="M611 292V328H987M1364 292V328H987V351" class="line"/>
+<path d="M987 292V328" fill="none" stroke="#52657b" stroke-width="2"/>
+<rect x="436" y="352" width="1104" height="76" class="box"/>
+<text x="463" y="383" class="head">Shared service adapter</text>
+<text x="463" y="411" class="body">Lazy manager · book/framework ownership checks · response views · status gating</text>
+<path d="M235 292V474" class="line"/>
+<text x="247" y="379" class="small">Direct manager calls</text>
+<text x="247" y="401" class="small">and shared service calls</text>
+<path d="M988 428V474" class="line"/>
+
+<rect x="40" y="456" width="1520" height="334" class="band"/>
+<text x="60" y="487" class="label">02 / SHARED PYTHON BACKEND</text>
+<rect x="60" y="505" width="1480" height="76" class="box blue"/>
+<text x="82" y="537" class="head">BookManager</text>
+<text x="82" y="565" class="body">Book lifecycle · embedding generation · chat storage · ReasoningEngine · framework jobs and progress</text>
+<path d="M235 581V622M611 581V622M987 581V622M1364 581V622" class="line"/>
+<rect x="60" y="622" width="350" height="138" class="box"/>
+<text x="82" y="657" class="head">Ingestion</text>
+<text x="82" y="690" class="body">pypdf · page-linked text</text>
+<text x="82" y="717" class="body">Paragraphs · metadata</text>
+<text x="82" y="744" class="body">Structural analysis / TOC hints</text>
+<rect x="436" y="622" width="350" height="138" class="box"/>
+<text x="458" y="657" class="head">Retrieval + Q&amp;A</text>
+<text x="458" y="690" class="body">BookRetriever · top-k chunks</text>
+<text x="458" y="717" class="body">Book / framework Q&amp;A</text>
+<text x="458" y="744" class="body">Source-grounded prompts</text>
+<rect x="812" y="622" width="350" height="138" class="box"/>
+<text x="834" y="657" class="head">Framework pipeline</text>
+<text x="834" y="690" class="body">Extract · enrich · build graph</text>
+<text x="834" y="717" class="body">Audit · repair · render</text>
+<text x="834" y="744" class="body">Bounded re-extraction</text>
+<rect x="1188" y="622" width="352" height="138" class="box"/>
+<text x="1210" y="657" class="head">Async execution</text>
+<text x="1210" y="690" class="body">Desktop: Qt worker threads</text>
+<text x="1210" y="717" class="body">API/MCP: detached process</text>
+<text x="1210" y="744" class="body">SQLite status + client polling</text>
+
+<path d="M235 760V836M611 760V836M987 760V836M1364 760V836" class="line"/>
+<text x="60" y="821" class="label">03 / PERSISTENCE AND INFERENCE</text>
+<rect x="60" y="854" width="350" height="192" class="box green"/>
+<text x="82" y="891" class="head">Local files + SQLite</text>
+<text x="82" y="925" class="body">books/ → original PDFs</text>
+<text x="82" y="952" class="body">data/books.db → books, chunks</text>
+<text x="82" y="979" class="body">Frameworks, nodes, edges, audits</text>
+<text x="82" y="1006" class="body">Chats, job status and progress</text>
+<rect x="436" y="854" width="350" height="192" class="box green"/>
+<text x="458" y="891" class="head">Local vector retrieval</text>
+<text x="458" y="925" class="body">Chroma → data/chroma_db</text>
+<text x="458" y="952" class="body">One collection per book</text>
+<text x="458" y="979" class="body">SentenceTransformers / Torch</text>
+<text x="458" y="1006" class="body">all-MiniLM-L6-v2 embeddings</text>
+<rect x="812" y="854" width="350" height="192" class="box purple"/>
+<text x="834" y="891" class="head">Hosted LLM inference</text>
+<text x="834" y="925" class="body">ChatOpenAI / LLMClient</text>
+<text x="834" y="952" class="body">HTTPS → OpenRouter → models</text>
+<text x="834" y="979" class="body">Selected source text leaves host</text>
+<text x="834" y="1006" class="body">Completions return to pipeline</text>
+<rect x="1188" y="854" width="352" height="192" class="box amber"/>
+<text x="1210" y="891" class="head">Configuration + routing</text>
+<text x="1210" y="925" class="body">data/config.json · .env fallback</text>
+<text x="1210" y="952" class="body">Critical / structured / utility</text>
+<text x="1210" y="979" class="body">Quality / balanced / cost presets</text>
+<text x="1210" y="1006" class="body">Primary model drives critical tasks</text>
+<path d="M1188 951H1164" class="line dash"/>
+
+<text x="60" y="1092" class="label">04 / RESULTS AND DISTRIBUTION</text>
+<rect x="60" y="1113" width="1480" height="108" class="box"/>
+<text x="82" y="1150" class="head">Definitive document + quality audits + graph + answers with source excerpts</text>
+<text x="82" y="1183" class="body">Nine document sections · PDF / DOCX · Qt WebEngine + vis-network mindmap · API / MCP / CLI views</text>
+<text x="82" y="1208" class="small">Windows distribution: separate PyInstaller desktop and MCP builds with Torch / Qt runtime hooks</text>
+<text x="60" y="1260" class="small">Architecture notes: interfaces can run as separate processes sharing a data root. Governor findings do not block saving.</text>
+<text x="60" y="1288" class="small">Static source inspection, not runtime certification. Detailed call flows, schema, loop rules and source links are in the companion atlas.</text>
+</svg>
